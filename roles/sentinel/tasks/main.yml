@@ -38,8 +38,8 @@
     group: "999"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "{{ redis_base_dir }}/config", mode: "0755" }
-    - { path: "{{ redis_base_dir }}/sentinel", mode: "0750" }
+    - {path: "{{ redis_base_dir }}/config", mode: "0755"}
+    - {path: "{{ redis_base_dir }}/sentinel", mode: "0750"}
 
 - name: Render desired Sentinel configuration
   ansible.builtin.template:

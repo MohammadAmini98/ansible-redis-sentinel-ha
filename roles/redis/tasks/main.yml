@@ -62,9 +62,9 @@
     group: "999"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "{{ redis_base_dir }}", mode: "0755" }
-    - { path: "{{ redis_base_dir }}/config", mode: "0755" }
-    - { path: "{{ redis_base_dir }}/runtime", mode: "0750" }
+    - {path: "{{ redis_base_dir }}", mode: "0755"}
+    - {path: "{{ redis_base_dir }}/config", mode: "0755"}
+    - {path: "{{ redis_base_dir }}/runtime", mode: "0750"}
 
 - name: Create the Redis TLS directory
   ansible.builtin.file:
