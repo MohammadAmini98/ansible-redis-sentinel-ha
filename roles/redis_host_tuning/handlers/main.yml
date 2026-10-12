@@ -8,4 +8,3 @@
     name: disable-transparent-huge-pages.service
     state: started
     enabled: true
-

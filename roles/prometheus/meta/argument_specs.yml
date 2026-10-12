@@ -9,4 +9,3 @@ argument_specs:
       prometheus_retention_time: {type: str, required: true}
       prometheus_retention_size: {type: str, required: true}
       prometheus_external_labels: {type: dict}
-

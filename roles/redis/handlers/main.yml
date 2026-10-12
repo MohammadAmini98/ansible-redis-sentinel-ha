@@ -4,4 +4,3 @@
     name: "{{ redis_container_name }}"
     state: started
     restart: true
-

@@ -33,4 +33,3 @@
 
 - name: Apply host tuning handlers now
   ansible.builtin.meta: flush_handlers
-

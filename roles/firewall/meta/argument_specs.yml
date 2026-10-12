@@ -6,4 +6,3 @@ argument_specs:
       redis_firewall_enabled: {type: bool, required: true}
       redis_firewall_management_cidrs: {type: list, elements: str}
       redis_firewall_ssh_port: {type: int}
-

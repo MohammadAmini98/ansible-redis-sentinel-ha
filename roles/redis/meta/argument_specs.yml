@@ -13,4 +13,3 @@ argument_specs:
       redis_maxmemory_policy:
         type: str
         choices: [noeviction, allkeys-lru, allkeys-lfu, allkeys-random, volatile-lru, volatile-lfu, volatile-random, volatile-ttl]
-

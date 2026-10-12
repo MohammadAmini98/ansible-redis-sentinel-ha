@@ -4,4 +4,3 @@
     name: "{{ prometheus_container_name }}"
     state: started
     restart: true
-
