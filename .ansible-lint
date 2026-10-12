@@ -1,5 +1,8 @@
 ---
 profile: production
+# Roles share a deliberate project-wide variable interface.
+skip_list:
+  - var-naming[no-role-prefix]
 exclude_paths:
   - .cache/
-
+  - inventories/production/group_vars/all/vault.yml
