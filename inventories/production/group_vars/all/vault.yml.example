@@ -1,0 +1,10 @@
+---
+# Copy to vault.yml, replace the values, and run:
+# ansible-vault encrypt inventories/production/group_vars/all/vault.yml
+vault_redis_password: "replace-me"
+vault_redis_sentinel_password: "replace-me"
+vault_redis_admin_password: "replace-me"
+vault_redis_application_password: "replace-me"
+vault_redis_replication_password: "replace-me"
+vault_redis_sentinel_redis_password: "replace-me"
+vault_redis_exporter_password: "replace-me"

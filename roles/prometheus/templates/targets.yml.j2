@@ -1,0 +1,14 @@
+{% for host in groups['redis_cluster'] %}
+- targets: ["{{ hostvars[host].ansible_host }}:{{ node_exporter_port }}"]
+  labels:
+    exporter: node
+    inventory_hostname: "{{ host }}"
+- targets: ["{{ hostvars[host].ansible_host }}:{{ redis_exporter_port }}"]
+  labels:
+    exporter: redis
+    inventory_hostname: "{{ host }}"
+- targets: ["{{ hostvars[host].ansible_host }}:{{ redis_sentinel_exporter_port }}"]
+  labels:
+    exporter: sentinel
+    inventory_hostname: "{{ host }}"
+{% endfor %}

@@ -1,0 +1,24 @@
+---
+prometheus_image: quay.io/prometheus/prometheus:v3.13.3
+prometheus_container_name: prometheus
+prometheus_port: 9090
+prometheus_listen_address: "{{ ansible_host }}"
+prometheus_scrape_interval: 15s
+prometheus_base_dir: /opt/prometheus
+prometheus_retention_time: 15d
+prometheus_retention_size: 8GB
+prometheus_external_labels: {}
+prometheus_config_auto_reload_interval: 1m
+prometheus_container_user: "65534:65534"
+prometheus_container_memory: 1g
+prometheus_container_cpus: 1.0
+prometheus_container_pids_limit: 256
+prometheus_container_stop_timeout: 60
+prometheus_remote_write: []
+node_exporter_port: 9100
+redis_exporter_port: 9121
+redis_sentinel_exporter_port: 9122
+docker_log_driver: local
+docker_log_options:
+  max-size: 20m
+  max-file: "5"

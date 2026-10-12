@@ -1,0 +1,36 @@
+---
+- name: Configure Redis kernel memory overcommit
+  ansible.posix.sysctl:
+    name: vm.overcommit_memory
+    value: "{{ redis_vm_overcommit_memory }}"
+    state: present
+    sysctl_set: true
+    reload: true
+  when: redis_host_tuning_enabled | bool
+
+- name: Install the Transparent Huge Pages systemd unit
+  ansible.builtin.template:
+    src: disable-thp.service.j2
+    dest: /etc/systemd/system/disable-transparent-huge-pages.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Disable Transparent Huge Pages
+  when:
+    - redis_host_tuning_enabled | bool
+    - redis_disable_transparent_hugepages | bool
+
+- name: Enable the clock synchronization service
+  ansible.builtin.service:
+    name: "{{ redis_required_clock_service }}"
+    state: started
+    enabled: true
+  when:
+    - redis_host_tuning_enabled | bool
+    - redis_required_clock_service | length > 0
+
+- name: Apply host tuning handlers now
+  ansible.builtin.meta: flush_handlers
+

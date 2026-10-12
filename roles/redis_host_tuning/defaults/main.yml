@@ -1,0 +1,8 @@
+---
+redis_host_tuning_enabled: true
+redis_vm_overcommit_memory: 1
+redis_disable_transparent_hugepages: true
+redis_transparent_hugepage_paths:
+  - /sys/kernel/mm/transparent_hugepage/enabled
+  - /sys/kernel/mm/transparent_hugepage/defrag
+redis_required_clock_service: systemd-timesyncd

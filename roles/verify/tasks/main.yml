@@ -1,0 +1,78 @@
+---
+- name: Check Sentinel quorum on every node
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+        + ['sentinel', 'ckquorum', redis_sentinel_master_name]
+      }}
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['redis_cluster'] }}"
+  register: verify_sentinel_quorum
+  changed_when: false
+  no_log: true
+
+- name: Assert every Sentinel has quorum
+  ansible.builtin.assert:
+    that:
+      - verify_sentinel_quorum.results | rejectattr('stdout', 'search', 'OK') | list | length == 0
+    fail_msg: One or more Sentinels cannot reach quorum and a majority.
+
+- name: Ask every Sentinel for its current master
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+        + ['--raw', 'sentinel', 'get-master-addr-by-name', redis_sentinel_master_name]
+      }}
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['redis_cluster'] }}"
+  register: verify_sentinel_masters
+  changed_when: false
+  no_log: true
+
+- name: Assert all Sentinels agree on one master
+  ansible.builtin.assert:
+    that:
+      - verify_sentinel_masters.results | map(attribute='stdout') | unique | list | length == 1
+    fail_msg: Sentinels do not agree on the current master.
+
+- name: Read the Redis role from every node
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_container_name, 'redis-cli',
+         '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['--user', redis_admin_username, '-a', redis_admin_password]
+           if redis_auth_enabled | bool and redis_acl_enabled | bool else
+           (['-a', redis_password] if redis_auth_enabled | bool else []))
+        + ['--raw', 'role']
+      }}
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['redis_cluster'] }}"
+  register: verify_redis_roles
+  changed_when: false
+  no_log: true
+
+- name: Assert there is exactly one master and the expected replicas
+  ansible.builtin.assert:
+    that:
+      - verify_redis_roles.results | selectattr('stdout', 'match', '^master') | list | length == 1
+      - verify_redis_roles.results | selectattr('stdout', 'match', '^(slave|replica)') | list | length == groups['redis_cluster'] | length - 1
+    fail_msg: Redis does not have exactly one master and the expected replicas.

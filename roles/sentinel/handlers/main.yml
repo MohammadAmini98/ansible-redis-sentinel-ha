@@ -1,0 +1,7 @@
+---
+- name: Restart Sentinel
+  community.docker.docker_container:
+    name: "{{ redis_sentinel_container_name }}"
+    state: started
+    restart: true
+

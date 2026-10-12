@@ -1,0 +1,232 @@
+---
+- name: Validate Redis topology variables
+  ansible.builtin.assert:
+    that:
+      - groups['redis_master'] | default([]) | length == 1
+      - groups['redis_replicas'] | default([]) | length >= 1
+      - ansible_host is defined
+    fail_msg: >-
+      Define exactly one host in redis_master, at least one host in
+      redis_replicas, and ansible_host for every Redis host.
+    quiet: true
+
+- name: Validate Redis password for legacy authentication
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (redis_auth_enabled | bool)
+        or (redis_acl_enabled | bool)
+        or (redis_password | default('') | string | length > 0)
+    fail_msg: >-
+      redis_password must be non-empty when Redis authentication is enabled
+      without ACLs. Set vault_redis_password in the encrypted vault file.
+    quiet: true
+
+- name: Validate Redis ACL credentials
+  ansible.builtin.assert:
+    that:
+      - >-
+        not (redis_auth_enabled | bool and redis_acl_enabled | bool)
+        or (redis_admin_password | default('') | string | length > 0)
+      - >-
+        not (redis_auth_enabled | bool and redis_acl_enabled | bool)
+        or (redis_application_password | default('') | string | length > 0)
+      - >-
+        not (redis_auth_enabled | bool and redis_acl_enabled | bool)
+        or (redis_replication_password | default('') | string | length > 0)
+      - >-
+        not (redis_auth_enabled | bool and redis_acl_enabled | bool)
+        or (redis_sentinel_redis_password | default('') | string | length > 0)
+      - >-
+        not (redis_auth_enabled | bool and redis_acl_enabled | bool)
+        or (redis_exporter_password | default('') | string | length > 0)
+    fail_msg: >-
+      All Redis ACL passwords must be non-empty. Check
+      vault_redis_admin_password, vault_redis_application_password,
+      vault_redis_replication_password, vault_redis_sentinel_redis_password,
+      and vault_redis_exporter_password in the encrypted vault file.
+      The failed assertion above identifies the missing credential.
+    quiet: true
+
+- name: Validate Redis host capacity
+  ansible.builtin.assert:
+    that:
+      - ansible_memtotal_mb | int >= redis_minimum_host_memory_mb | int
+    fail_msg: "Redis requires at least {{ redis_minimum_host_memory_mb }} MiB of host memory."
+
+- name: Create Redis directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ redis_base_dir }}", mode: "0755" }
+    - { path: "{{ redis_base_dir }}/config", mode: "0755" }
+    - { path: "{{ redis_base_dir }}/runtime", mode: "0750" }
+
+- name: Create the Redis TLS directory
+  ansible.builtin.file:
+    path: "{{ redis_base_dir }}/tls"
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "0750"
+  when: redis_tls_enabled | bool
+
+- name: Install Redis TLS material
+  ansible.builtin.copy:
+    src: "{{ redis_tls_source_dir }}/{{ inventory_hostname }}/{{ item }}"
+    dest: "{{ redis_base_dir }}/tls/{{ item }}"
+    owner: "999"
+    group: "999"
+    mode: "{{ '0600' if item == redis_tls_key_filename else '0644' }}"
+  loop:
+    - "{{ redis_tls_cert_filename }}"
+    - "{{ redis_tls_key_filename }}"
+    - "{{ redis_tls_ca_filename }}"
+  notify: Restart Redis
+  when: redis_tls_enabled | bool
+  no_log: true
+
+- name: Create the persistent Redis data directory
+  ansible.builtin.file:
+    path: "{{ redis_base_dir }}/data"
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "0750"
+  when: redis_persistence_enabled | bool
+
+- name: Check for an existing Redis runtime configuration
+  ansible.builtin.stat:
+    path: "{{ redis_base_dir }}/runtime/redis.conf"
+  register: redis_runtime_config
+
+- name: Discover the current master from the local Sentinel
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name | default('redis-sentinel'),
+         'redis-cli', '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password]
+           if redis_sentinel_auth_enabled | default(true) | bool else [])
+        + ['--raw', 'sentinel', 'get-master-addr-by-name',
+           redis_sentinel_master_name | default('mymaster')]
+      }}
+  register: redis_discovered_master
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+- name: Select the safe Redis master address
+  ansible.builtin.set_fact:
+    redis_effective_master_ip: >-
+      {{ redis_discovered_master.stdout_lines[0]
+         if redis_discovered_master.rc == 0 and redis_discovered_master.stdout_lines | length >= 2
+         else hostvars[groups['redis_master'][0]].ansible_host }}
+    redis_effective_master_port: >-
+      {{ redis_discovered_master.stdout_lines[1]
+         if redis_discovered_master.rc == 0 and redis_discovered_master.stdout_lines | length >= 2
+         else redis_master_port }}
+
+- name: Render the writable Redis runtime configuration
+  ansible.builtin.template:
+    src: redis.conf.j2
+    dest: "{{ redis_base_dir }}/runtime/redis.conf"
+    owner: "999"
+    group: "999"
+    mode: "0640"
+  when: >-
+    redis_discovered_master.rc == 0
+    or not redis_runtime_config.stat.exists
+    or redis_force_config_reinitialize | bool
+  notify: Restart Redis
+  no_log: true
+
+- name: Render Redis ACL users
+  ansible.builtin.template:
+    src: users.acl.j2
+    dest: "{{ redis_base_dir }}/config/users.acl"
+    owner: "999"
+    group: "999"
+    mode: "0600"
+  notify: Restart Redis
+  when:
+    - redis_auth_enabled | bool
+    - redis_acl_enabled | bool
+  no_log: true
+
+- name: Pull the Redis image
+  community.docker.docker_image:
+    name: "{{ redis_image }}"
+    source: pull
+    force_source: false
+
+- name: Start the Redis container
+  community.docker.docker_container:
+    name: "{{ redis_container_name }}"
+    image: "{{ redis_image }}"
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    state: started
+    restart_policy: "{{ redis_container_restart_policy }}"
+    network_mode: host
+    user: "{{ redis_container_user }}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    memory: "{{ redis_container_memory }}"
+    memory_reservation: "{{ redis_container_memory_reservation }}"
+    cpus: "{{ redis_container_cpus }}"
+    pids_limit: "{{ redis_container_pids_limit }}"
+    ulimits:
+      - "nofile:{{ redis_container_nofile_soft }}:{{ redis_container_nofile_hard }}"
+    cap_drop: "{{ redis_container_cap_drop }}"
+    security_opts: "{{ redis_container_security_opts }}"
+    stop_timeout: "{{ redis_container_stop_timeout }}"
+    log_driver: "{{ docker_log_driver }}"
+    log_options: "{{ docker_log_options }}"
+    volumes: >-
+      {{
+        [redis_base_dir ~ '/runtime:/usr/local/etc/redis']
+        + ([redis_base_dir ~ '/config/users.acl:/usr/local/etc/redis/users.acl:ro']
+           if redis_auth_enabled | bool and redis_acl_enabled | bool else [])
+        + ([redis_base_dir ~ '/tls:/tls:ro'] if redis_tls_enabled | bool else [])
+        + ([redis_base_dir ~ '/data:/data'] if redis_persistence_enabled | bool else [])
+      }}
+    comparisons:
+      image: strict
+      command: strict
+      volumes: strict
+
+- name: Apply pending Redis restart before continuing
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Redis to become ready
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_container_name, 'redis-cli',
+         '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['--user', redis_admin_username, '-a', redis_admin_password]
+           if redis_auth_enabled | bool and redis_acl_enabled | bool else
+           (['-a', redis_password] if redis_auth_enabled | bool else []))
+        + ['ping']
+      }}
+  register: redis_ping
+  changed_when: false
+  retries: 15
+  delay: 2
+  until: "'PONG' in redis_ping.stdout"
+  no_log: true
+  when: not ansible_check_mode

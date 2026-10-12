@@ -1,0 +1,63 @@
+---
+- name: Validate backup prerequisites
+  ansible.builtin.assert:
+    that:
+      - not (redis_backup_enabled | bool) or redis_persistence_enabled | bool
+      - not (redis_backup_enabled | bool and redis_auth_enabled | bool and redis_acl_enabled | bool) or redis_admin_password | length > 0
+      - not (redis_backup_enabled | bool and redis_auth_enabled | bool and not (redis_acl_enabled | bool)) or redis_password | length > 0
+      - redis_backup_retention_days | int >= 1
+      - redis_backup_timeout_seconds | int >= 1
+      - redis_backup_schedule_hour | int >= 0
+      - redis_backup_schedule_hour | int <= 23
+      - redis_backup_schedule_minute | int >= 0
+      - redis_backup_schedule_minute | int + (groups['redis_cluster'] | length - 1) * 10 <= 59
+    fail_msg: Redis backups require redis_persistence_enabled=true.
+
+- name: Create Redis backup directory
+  ansible.builtin.file:
+    path: "{{ redis_backup_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: redis_backup_enabled | bool
+
+- name: Install Redis backup credential
+  ansible.builtin.copy:
+    content: >-
+      {{ redis_admin_password if redis_acl_enabled | bool else redis_password }}
+    dest: "{{ redis_backup_dir }}/.redis-password"
+    owner: root
+    group: root
+    mode: "0600"
+  when:
+    - redis_backup_enabled | bool
+    - redis_auth_enabled | bool
+  no_log: true
+
+- name: Remove a stale Redis backup credential when authentication or backups are disabled
+  ansible.builtin.file:
+    path: "{{ redis_backup_dir }}/.redis-password"
+    state: absent
+  when: not (redis_backup_enabled | bool and redis_auth_enabled | bool)
+
+- name: Install Redis backup script
+  ansible.builtin.template:
+    src: redis-backup.sh.j2
+    dest: /usr/local/sbin/redis-backup
+    owner: root
+    group: root
+    mode: "0700"
+  when: redis_backup_enabled | bool
+  no_log: true
+
+- name: Schedule Redis backups
+  ansible.builtin.cron:
+    name: Redis verified RDB backup
+    user: root
+    minute: >-
+      {{ redis_backup_schedule_minute | int
+         + groups['redis_cluster'].index(inventory_hostname) * 10 }}
+    hour: "{{ redis_backup_schedule_hour }}"
+    job: /usr/local/sbin/redis-backup
+    state: "{{ 'present' if redis_backup_enabled | bool else 'absent' }}"

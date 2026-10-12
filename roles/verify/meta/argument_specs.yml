@@ -1,0 +1,7 @@
+---
+argument_specs:
+  main:
+    short_description: Verify Redis replication and Sentinel quorum
+    options:
+      redis_sentinel_master_name: {type: str, required: true}
+

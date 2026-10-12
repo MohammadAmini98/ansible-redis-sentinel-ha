@@ -1,0 +1,83 @@
+---
+- name: Install and configure Docker
+  hosts: docker_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - role: docker
+      tags: [docker]
+      when: docker_enabled | default(true) | bool
+
+- name: Apply Redis host tuning and optional firewall policy
+  hosts: redis_cluster
+  become: true
+  gather_facts: true
+  roles:
+    - role: redis_host_tuning
+      tags: [tuning]
+    - role: firewall
+      tags: [firewall]
+
+- name: Start the Redis master
+  hosts: redis_master
+  become: true
+  roles:
+    - role: redis
+      tags: [redis]
+      when: redis_enabled | default(true) | bool
+
+- name: Start Redis replicas
+  hosts: redis_replicas
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - role: redis
+      tags: [redis]
+      when: redis_enabled | default(true) | bool
+
+- name: Start Sentinel on every Redis node
+  hosts: redis_cluster
+  become: true
+  serial: 1
+  any_errors_fatal: true
+  roles:
+    - role: sentinel
+      tags: [sentinel]
+      when: redis_sentinel_enabled | default(true) | bool
+
+- name: Start system and Redis metric exporters
+  hosts: redis_cluster
+  become: true
+  serial: 1
+  roles:
+    - role: exporters
+      tags: [exporters, monitoring]
+      when: redis_exporters_enabled | default(true) | bool
+
+- name: Start Prometheus and validate exporter targets
+  hosts: monitoring_server
+  become: true
+  roles:
+    - role: prometheus
+      tags: [prometheus, monitoring]
+      when: prometheus_enabled | default(true) | bool
+
+- name: Configure Redis backups
+  hosts: redis_cluster
+  become: true
+  roles:
+    - role: redis_backup
+      tags: [backup]
+
+- name: Verify the complete deployment
+  hosts: monitoring_server
+  become: true
+  roles:
+    - role: verify
+      tags: [verify]
+      when:
+        - not ansible_check_mode
+        - redis_verify_enabled | default(true) | bool
+        - redis_enabled | default(true) | bool
+        - redis_sentinel_enabled | default(true) | bool

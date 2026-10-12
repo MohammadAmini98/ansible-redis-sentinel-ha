@@ -1,0 +1,16 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy a failover-aware Redis container
+    options:
+      redis_image: {type: str, required: true}
+      redis_port: {type: int, required: true}
+      redis_auth_enabled: {type: bool, required: true}
+      redis_acl_enabled: {type: bool, required: true}
+      redis_persistence_enabled: {type: bool, required: true}
+      redis_tls_enabled: {type: bool, required: true}
+      redis_maxmemory: {type: str, required: true}
+      redis_maxmemory_policy:
+        type: str
+        choices: [noeviction, allkeys-lru, allkeys-lfu, allkeys-random, volatile-lru, volatile-lfu, volatile-random, volatile-ttl]
+

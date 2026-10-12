@@ -1,0 +1,44 @@
+global:
+  scrape_interval: {{ prometheus_scrape_interval }}
+  evaluation_interval: {{ prometheus_scrape_interval }}
+{% if prometheus_external_labels | length > 0 %}
+  external_labels:
+{{ prometheus_external_labels | to_nice_yaml(indent=2) | indent(4, true) }}
+{% endif %}
+{% if prometheus_remote_write | length > 0 %}
+remote_write:
+{{ prometheus_remote_write | to_nice_yaml(indent=2) | indent(2, true) }}
+{% endif %}
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - "{{ prometheus_listen_address }}:{{ prometheus_port }}"
+
+  - job_name: node-exporter
+    file_sd_configs:
+      - files: [/etc/prometheus/targets.yml]
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [exporter]
+        regex: node
+        action: keep
+
+  - job_name: redis-exporter
+    file_sd_configs:
+      - files: [/etc/prometheus/targets.yml]
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [exporter]
+        regex: redis
+        action: keep
+
+  - job_name: sentinel-exporter
+    file_sd_configs:
+      - files: [/etc/prometheus/targets.yml]
+        refresh_interval: 30s
+    relabel_configs:
+      - source_labels: [exporter]
+        regex: sentinel
+        action: keep

@@ -1,0 +1,16 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy Node, Redis, and Sentinel metric exporters
+    options:
+      node_exporter_image: {type: str, required: true}
+      node_exporter_port: {type: int, required: true}
+      redis_exporter_image: {type: str, required: true}
+      redis_exporter_port: {type: int, required: true}
+      redis_sentinel_exporter_port: {type: int, required: true}
+      redis_exporter_container_user: {type: str, required: true}
+      redis_exporter_secret_owner: {type: str, required: true}
+      redis_exporter_secret_group: {type: str, required: true}
+      redis_exporter_secret_mode: {type: str, required: true}
+      exporters_startup_timeout: {type: int, required: true}
+

@@ -1,0 +1,5 @@
+inventories/production/group_vars/all/vault.yml
+files/tls/*/*.key
+*.retry
+.cache/
+artifacts/

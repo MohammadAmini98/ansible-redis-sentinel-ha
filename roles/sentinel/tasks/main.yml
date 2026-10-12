@@ -1,0 +1,214 @@
+---
+- name: Validate Sentinel topology variables
+  ansible.builtin.assert:
+    that:
+      - groups['redis_master'] | default([]) | length == 1
+      - ansible_host is defined
+      - redis_sentinel_quorum | int >= 2
+      - redis_sentinel_quorum | int <= groups['redis_cluster'] | length
+    fail_msg: "Sentinel requires one inventory master, ansible_host on every node, and a quorum between 2 and the cluster size."
+    quiet: true
+
+- name: Validate Sentinel service authentication
+  ansible.builtin.assert:
+    that:
+      - not (redis_sentinel_auth_enabled | bool) or redis_sentinel_password | length > 0
+    fail_msg: >-
+      redis_sentinel_auth_enabled=true but redis_sentinel_password is empty.
+      Set vault_redis_sentinel_password in group_vars/all/vault.yml or export
+      REDIS_SENTINEL_PASSWORD on the Ansible controller.
+    quiet: true
+
+- name: Validate Sentinel credentials for monitored Redis
+  ansible.builtin.assert:
+    that:
+      - not (redis_auth_enabled | bool) or redis_acl_enabled | bool or redis_password | length > 0
+      - not (redis_auth_enabled | bool and redis_acl_enabled | bool) or redis_sentinel_redis_password | length > 0
+    fail_msg: >-
+      Redis authentication is enabled, but Sentinel's Redis credential is
+      empty. Configure redis_password for legacy authentication or
+      vault_redis_sentinel_redis_password for ACL authentication.
+    quiet: true
+
+- name: Create Sentinel directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "999"
+    group: "999"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ redis_base_dir }}/config", mode: "0755" }
+    - { path: "{{ redis_base_dir }}/sentinel", mode: "0750" }
+
+- name: Render desired Sentinel configuration
+  ansible.builtin.template:
+    src: sentinel.conf.j2
+    dest: "{{ redis_base_dir }}/config/sentinel.conf"
+    owner: "999"
+    group: "999"
+    mode: "0640"
+  no_log: true
+
+- name: Read the desired TLS bundle checksums for Sentinel
+  ansible.builtin.stat:
+    path: "{{ redis_tls_source_dir }}/{{ inventory_hostname }}/{{ item }}"
+    checksum_algorithm: sha256
+  loop:
+    - "{{ redis_tls_cert_filename }}"
+    - "{{ redis_tls_key_filename }}"
+    - "{{ redis_tls_ca_filename }}"
+  register: redis_sentinel_tls_files
+  when: redis_tls_enabled | bool
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Validate the desired Sentinel TLS bundle
+  ansible.builtin.assert:
+    that:
+      - redis_sentinel_tls_files.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: "TLS material is missing for {{ inventory_hostname }}."
+  when: redis_tls_enabled | bool
+  no_log: true
+
+- name: Calculate the Sentinel TLS bundle identity
+  ansible.builtin.set_fact:
+    redis_sentinel_tls_bundle_checksum: >-
+      {{ redis_sentinel_tls_files.results | map(attribute='stat.checksum') | join(':')
+         if redis_tls_enabled | bool else 'disabled' }}
+  no_log: true
+
+- name: Initialize the writable Sentinel runtime configuration
+  ansible.builtin.copy:
+    src: "{{ redis_base_dir }}/config/sentinel.conf"
+    dest: "{{ redis_base_dir }}/sentinel/sentinel.conf"
+    remote_src: true
+    owner: "999"
+    group: "999"
+    mode: "0640"
+    force: "{{ redis_sentinel_force_config_reinitialize | bool }}"
+  notify: Restart Sentinel
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Start the Sentinel container
+  community.docker.docker_container:
+    name: "{{ redis_sentinel_container_name }}"
+    image: "{{ redis_image }}"
+    command: ["redis-sentinel", "/sentinel-runtime/sentinel.conf"]
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    user: "{{ redis_sentinel_container_user }}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    memory: "{{ redis_sentinel_container_memory }}"
+    cpus: "{{ redis_sentinel_container_cpus }}"
+    pids_limit: "{{ redis_sentinel_container_pids_limit }}"
+    cap_drop: "{{ redis_sentinel_container_cap_drop }}"
+    security_opts: "{{ redis_sentinel_container_security_opts }}"
+    stop_timeout: "{{ redis_sentinel_container_stop_timeout }}"
+    log_driver: "{{ docker_log_driver }}"
+    log_options: "{{ docker_log_options }}"
+    labels:
+      io.ansible.redis-sentinel-ha.tls-bundle: "{{ redis_sentinel_tls_bundle_checksum }}"
+    volumes:
+      - "{{ redis_base_dir }}/sentinel:/sentinel-runtime"
+      - "{{ redis_base_dir }}/tls:/tls:ro"
+    comparisons:
+      image: strict
+      command: strict
+      volumes: strict
+
+- name: Apply pending Sentinel restart before validation
+  ansible.builtin.meta: flush_handlers
+
+- name: Reconcile Sentinel master-specific runtime settings
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+        + ['sentinel', 'set', redis_sentinel_master_name, item.name, item.value | string]
+      }}
+  loop: >-
+    {{
+      [
+        {'name': 'down-after-milliseconds', 'value': redis_sentinel_down_after_ms},
+        {'name': 'failover-timeout', 'value': redis_sentinel_failover_timeout_ms},
+        {'name': 'parallel-syncs', 'value': redis_sentinel_parallel_syncs}
+      ]
+      + ([{'name': 'auth-user', 'value': redis_sentinel_username},
+          {'name': 'auth-pass', 'value': redis_sentinel_redis_password}]
+         if redis_auth_enabled | bool and redis_acl_enabled | bool else
+         ([{'name': 'auth-pass', 'value': redis_password}]
+          if redis_auth_enabled | bool else []))
+    }}
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Reconcile Sentinel global announce settings
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+        + ['sentinel', 'config', 'set', item.name, item.value | string]
+      }}
+  loop:
+    - {name: announce-ip, value: "{{ redis_sentinel_announce_ip }}"}
+    - {name: announce-port, value: "{{ redis_sentinel_announce_port }}"}
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Flush the reconciled Sentinel state to disk
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+        + ['sentinel', 'flushconfig']
+      }}
+  changed_when: false
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Wait for Sentinel to report the master
+  ansible.builtin.command:
+    argv: >-
+      {{
+        ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+        + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+            '--cert', '/tls/' ~ redis_tls_cert_filename,
+            '--key', '/tls/' ~ redis_tls_key_filename]
+           if redis_tls_enabled | bool else [])
+        + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+        + ['sentinel', 'get-master-addr-by-name', redis_sentinel_master_name]
+      }}
+  register: sentinel_master
+  changed_when: false
+  retries: 15
+  delay: 2
+  until: sentinel_master.rc == 0 and sentinel_master.stdout | length > 0
+  no_log: true
+  when: not ansible_check_mode

@@ -1,0 +1,19 @@
+---
+redis_container_name: redis
+redis_sentinel_container_name: redis-sentinel
+redis_sentinel_master_name: mymaster
+redis_sentinel_port: 26379
+redis_sentinel_tls_port: 26380
+redis_sentinel_auth_enabled: true
+redis_sentinel_password: ""
+redis_auth_enabled: true
+redis_acl_enabled: false
+redis_admin_username: admin
+redis_admin_password: ""
+redis_password: ""
+redis_tls_enabled: false
+redis_port: 6379
+redis_tls_port: 6380
+redis_tls_ca_filename: ca.crt
+redis_tls_cert_filename: redis.crt
+redis_tls_key_filename: redis.key

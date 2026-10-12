@@ -1,0 +1,20 @@
+---
+redis_backup_enabled: "{{ redis_persistence_enabled | bool }}"
+redis_backup_dir: /opt/redis/backups
+redis_backup_retention_days: 7
+redis_backup_timeout_seconds: 300
+redis_backup_schedule_hour: "2"
+redis_backup_schedule_minute: "15"
+redis_persistence_enabled: true
+redis_container_name: redis
+redis_auth_enabled: true
+redis_acl_enabled: false
+redis_admin_username: admin
+redis_admin_password: ""
+redis_password: ""
+redis_tls_enabled: false
+redis_port: 6379
+redis_tls_port: 6380
+redis_tls_ca_filename: ca.crt
+redis_tls_cert_filename: redis.crt
+redis_tls_key_filename: redis.key

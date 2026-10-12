@@ -1,0 +1,9 @@
+---
+argument_specs:
+  main:
+    short_description: Schedule verified Redis RDB backups
+    options:
+      redis_backup_enabled: {type: bool, required: true}
+      redis_backup_dir: {type: str, required: true}
+      redis_backup_retention_days: {type: int, required: true}
+      redis_backup_timeout_seconds: {type: int, required: true}

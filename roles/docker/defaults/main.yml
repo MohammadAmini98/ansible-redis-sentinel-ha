@@ -1,0 +1,22 @@
+---
+docker_apt_package: docker.io
+docker_python_package: python3-docker
+docker_install_source: distro
+docker_official_apt_architecture: amd64
+docker_official_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+docker_apt_lock_timeout: 300
+docker_apt_install_retries: 5
+docker_apt_retry_delay: 15
+docker_users: []
+docker_configure_daemon: true
+docker_daemon_config:
+  log-driver: local
+  log-opts:
+    max-size: 20m
+    max-file: "5"
+  live-restore: true

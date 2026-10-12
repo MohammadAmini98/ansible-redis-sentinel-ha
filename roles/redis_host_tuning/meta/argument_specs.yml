@@ -1,0 +1,9 @@
+---
+argument_specs:
+  main:
+    short_description: Apply Redis Linux host tuning
+    options:
+      redis_host_tuning_enabled: {type: bool, required: true}
+      redis_vm_overcommit_memory: {type: int, choices: [0, 1, 2]}
+      redis_disable_transparent_hugepages: {type: bool}
+      redis_transparent_hugepage_paths: {type: list, elements: str}

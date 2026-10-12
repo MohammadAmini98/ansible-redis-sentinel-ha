@@ -1,0 +1,95 @@
+---
+redis_image: redis:7.4.11-bookworm
+redis_container_name: redis
+redis_container_user: "999:999"
+redis_base_dir: /opt/redis
+redis_force_config_reinitialize: false
+redis_sentinel_container_name: redis-sentinel
+redis_sentinel_port: 26379
+redis_sentinel_tls_port: 26380
+redis_sentinel_master_name: mymaster
+redis_sentinel_auth_enabled: true
+redis_sentinel_password: ""
+
+redis_bind_address: 0.0.0.0
+redis_port: 6379
+redis_auth_enabled: true
+redis_acl_enabled: false
+redis_password: ""
+redis_admin_username: admin
+redis_admin_password: ""
+redis_application_username: application
+redis_application_password: "{{ redis_password }}"
+redis_replication_username: replication
+redis_replication_password: ""
+redis_sentinel_username: sentinel
+redis_sentinel_redis_password: ""
+redis_exporter_username: exporter
+redis_exporter_password: ""
+redis_default_user_acl_rules: "off"
+redis_admin_acl_rules: "~* &* +@all"
+redis_application_acl_rules: "~* &* +@all -@admin -@dangerous"
+redis_replication_acl_rules: "+psync +replconf +ping"
+redis_sentinel_acl_rules: >-
+  resetchannels &__sentinel__:hello +multi +slaveof +replicaof +ping +exec
+  +subscribe +config|rewrite +role +publish +info +client|setname
+  +client|kill +script|kill
+redis_exporter_acl_rules: >-
+  -@all +@connection +memory +strlen +config|get +xinfo +pfcount +zcard
+  +type +xlen +client +scard +llen +hlen +get +eval +slowlog
+  +cluster|info +cluster|slots +cluster|nodes +info +latency +scan
+redis_acl_file: /usr/local/etc/redis/users.acl
+redis_protected_mode: "{{ 'yes' if redis_auth_enabled | bool else 'no' }}"
+redis_daemonize: "no"
+
+redis_persistence_enabled: true
+redis_container_restart_policy: "{{ 'unless-stopped' if redis_persistence_enabled | bool else 'no' }}"
+redis_data_dir: /data
+redis_dbfilename: dump.rdb
+redis_appendonly: "{{ 'yes' if redis_persistence_enabled | bool else 'no' }}"
+redis_appendfsync: everysec
+redis_rdb_save_rules:
+  - "3600 1"
+  - "300 100"
+  - "60 10000"
+redis_disabled_save_value: ""
+
+redis_replica_announce_ip: "{{ ansible_host }}"
+redis_replica_announce_port: "{{ redis_tls_port if redis_tls_enabled | bool else redis_port }}"
+redis_master_host: "{{ hostvars[groups['redis_master'][0]].ansible_host }}"
+redis_master_port: "{{ redis_tls_port if redis_tls_enabled | bool else redis_port }}"
+redis_replica_priority: 100
+redis_repl_backlog_size: 64mb
+redis_min_replicas_to_write: 1
+redis_min_replicas_max_lag: 10
+
+redis_maxmemory: "0"
+redis_maxmemory_policy: noeviction
+
+redis_tls_enabled: false
+redis_disabled_port: 0
+redis_tls_container_dir: /tls
+redis_tls_source_dir: "{{ playbook_dir }}/files/tls"
+redis_tls_cert_filename: redis.crt
+redis_tls_key_filename: redis.key
+redis_tls_ca_filename: ca.crt
+redis_tls_port: 6380
+redis_tls_auth_clients: "yes"
+redis_tls_replication: "yes"
+
+redis_container_memory: 3g
+redis_container_memory_reservation: 2g
+redis_container_cpus: 1.5
+redis_container_pids_limit: 256
+redis_container_nofile_soft: 65535
+redis_container_nofile_hard: 65535
+redis_container_stop_timeout: 60
+redis_minimum_host_memory_mb: 2048
+redis_container_cap_drop:
+  - ALL
+redis_container_security_opts:
+  - no-new-privileges:true
+docker_log_driver: local
+docker_log_options:
+  max-size: 20m
+  max-file: "5"

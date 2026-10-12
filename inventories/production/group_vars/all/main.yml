@@ -1,0 +1,187 @@
+---
+# -----------------------------------------------------------------------------
+# Ansible connection
+# -----------------------------------------------------------------------------
+ansible_user: ubuntu
+ansible_ssh_private_key_file: /home/mohammad/.ssh/id_rsa
+
+# -----------------------------------------------------------------------------
+# Docker
+# Set false when Docker is already managed outside this project.
+# -----------------------------------------------------------------------------
+docker_enabled: true
+docker_log_driver: local
+docker_log_options:
+  max-size: 20m
+  max-file: "5"
+
+# -----------------------------------------------------------------------------
+# Redis
+# Authentication variables are kept at the top of this component.
+# Secrets come from Ansible Vault or controller environment variables.
+# -----------------------------------------------------------------------------
+redis_enabled: true
+redis_auth_enabled: true
+redis_acl_enabled: true
+redis_acl_file: /usr/local/etc/redis/users.acl
+redis_password: >-
+  {{ vault_redis_password | default(lookup('env', 'REDIS_PASSWORD')) }}
+redis_admin_username: admin
+redis_admin_password: "{{ vault_redis_admin_password | default(redis_password) }}"
+redis_application_username: application
+redis_application_password: >-
+  {{ vault_redis_application_password | default(redis_password) }}
+redis_replication_username: replication
+redis_replication_password: >-
+  {{ vault_redis_replication_password | default(redis_password) }}
+
+redis_image: redis:7.4.11-bookworm
+redis_container_name: redis
+redis_base_dir: /opt/redis
+redis_bind_address: 0.0.0.0
+redis_port: 6379
+redis_protected_mode: "{{ 'yes' if redis_auth_enabled | bool else 'no' }}"
+redis_daemonize: "no"
+redis_data_dir: /data
+redis_dbfilename: dump.rdb
+redis_replica_announce_port: >-
+  {{ redis_tls_port if redis_tls_enabled | bool else redis_port }}
+redis_master_port: >-
+  {{ redis_tls_port if redis_tls_enabled | bool else redis_port }}
+redis_maxmemory: 1gb
+redis_maxmemory_policy: noeviction
+redis_min_replicas_to_write: 1
+redis_min_replicas_max_lag: 10
+redis_replica_priority: 100
+redis_repl_backlog_size: 64mb
+redis_container_memory: 2g
+redis_container_memory_reservation: 1g
+redis_container_cpus: 1.5
+redis_container_pids_limit: 256
+
+# -----------------------------------------------------------------------------
+# Redis persistence
+# -----------------------------------------------------------------------------
+redis_persistence_enabled: true
+redis_appendonly: "{{ 'yes' if redis_persistence_enabled | bool else 'no' }}"
+redis_appendfsync: everysec
+redis_rdb_save_rules:
+  - "3600 1"
+  - "300 100"
+  - "60 10000"
+redis_disabled_save_value: ""
+
+# -----------------------------------------------------------------------------
+# Redis TLS
+# Certificate files are copied from redis_tls_source_dir when enabled.
+# -----------------------------------------------------------------------------
+redis_tls_enabled: false
+redis_disabled_port: 0
+redis_tls_container_dir: /tls
+redis_tls_source_dir: "{{ playbook_dir }}/files/tls"
+redis_tls_cert_filename: redis.crt
+redis_tls_key_filename: redis.key
+redis_tls_ca_filename: ca.crt
+redis_tls_port: 6380
+redis_tls_auth_clients: "yes"
+redis_tls_replication: "yes"
+
+# -----------------------------------------------------------------------------
+# Redis Sentinel
+# Authentication variables are kept at the top of this component.
+# -----------------------------------------------------------------------------
+redis_sentinel_enabled: true
+redis_sentinel_auth_enabled: false
+redis_sentinel_password: >-
+  {{ vault_redis_sentinel_password |
+     default(lookup('env', 'REDIS_SENTINEL_PASSWORD')) }}
+redis_sentinel_username: sentinel
+redis_sentinel_redis_password: >-
+  {{ vault_redis_sentinel_redis_password | default(redis_password) }}
+
+redis_sentinel_container_name: redis-sentinel
+redis_sentinel_bind_address: 0.0.0.0
+redis_sentinel_protected_mode: "no"
+redis_sentinel_daemonize: "no"
+redis_sentinel_working_directory: /tmp
+redis_sentinel_port: 26379
+redis_sentinel_tls_port: 26380
+redis_sentinel_announce_port: >-
+  {{ redis_sentinel_tls_port
+     if redis_tls_enabled | bool else redis_sentinel_port }}
+redis_sentinel_monitor_port: >-
+  {{ redis_tls_port if redis_tls_enabled | bool else redis_port }}
+redis_sentinel_master_name: mymaster
+redis_sentinel_quorum: 2
+redis_sentinel_down_after_ms: 5000
+redis_sentinel_failover_timeout_ms: 60000
+redis_sentinel_parallel_syncs: 1
+
+# -----------------------------------------------------------------------------
+# Redis host tuning
+# -----------------------------------------------------------------------------
+redis_host_tuning_enabled: true
+
+# -----------------------------------------------------------------------------
+# Host firewall
+# False means this project leaves the host firewall unmanaged.
+# -----------------------------------------------------------------------------
+redis_firewall_enabled: false
+redis_firewall_management_cidrs:
+  - 192.168.122.0/24
+redis_firewall_client_cidrs:
+  - 192.168.122.0/24
+
+# -----------------------------------------------------------------------------
+# Metric exporters
+# Redis credentials used by Redis Exporter are kept at the top.
+# -----------------------------------------------------------------------------
+redis_exporters_enabled: true
+redis_exporter_username: exporter
+redis_exporter_password: >-
+  {{ vault_redis_exporter_password | default(redis_password) }}
+
+node_exporter_image: quay.io/prometheus/node-exporter:v1.12.1
+node_exporter_port: 9100
+redis_exporter_image: quay.io/oliver006/redis_exporter:v1.93.0
+redis_exporter_port: 9121
+redis_sentinel_exporter_port: 9122
+redis_exporter_container_user: "59000:59000"
+redis_exporter_secret_owner: "59000"
+redis_exporter_secret_group: "59000"
+redis_exporter_secret_mode: "0400"
+exporters_startup_timeout: 60
+
+# -----------------------------------------------------------------------------
+# Prometheus
+# -----------------------------------------------------------------------------
+prometheus_enabled: true
+prometheus_image: quay.io/prometheus/prometheus:v3.13.3
+prometheus_port: 9090
+prometheus_listen_address: "{{ ansible_host }}"
+prometheus_scrape_interval: 15s
+prometheus_base_dir: /opt/prometheus
+prometheus_retention_time: 15d
+prometheus_retention_size: 8GB
+prometheus_container_memory: 768m
+prometheus_external_labels:
+  environment: production
+prometheus_config_auto_reload_interval: 1m
+prometheus_remote_write: []
+
+# -----------------------------------------------------------------------------
+# Redis backups
+# Backups automatically turn off when Redis or persistence is disabled.
+# -----------------------------------------------------------------------------
+redis_backup_enabled: >-
+  {{ redis_enabled | bool and redis_persistence_enabled | bool }}
+redis_backup_dir: /opt/redis/backups
+redis_backup_retention_days: 7
+redis_backup_timeout_seconds: 300
+redis_backup_schedule_hour: "2"
+redis_backup_schedule_minute: "15"
+
+# -----------------------------------------------------------------------------
+# Post-deployment verification
+# -----------------------------------------------------------------------------
+redis_verify_enabled: true

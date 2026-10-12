@@ -1,0 +1,14 @@
+---
+- name: Restart Redis Exporter
+  community.docker.docker_container:
+    name: "{{ redis_exporter_container_name }}"
+    state: started
+    restart: true
+  no_log: true
+
+- name: Restart Sentinel Exporter
+  community.docker.docker_container:
+    name: "{{ redis_sentinel_exporter_container_name }}"
+    state: started
+    restart: true
+  no_log: true

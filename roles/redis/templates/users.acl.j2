@@ -1,0 +1,6 @@
+user default {{ redis_default_user_acl_rules }}
+user {{ redis_admin_username }} on #{{ redis_admin_password | hash('sha256') }} {{ redis_admin_acl_rules }}
+user {{ redis_application_username }} on #{{ redis_application_password | hash('sha256') }} {{ redis_application_acl_rules }}
+user {{ redis_replication_username }} on #{{ redis_replication_password | hash('sha256') }} {{ redis_replication_acl_rules }}
+user {{ redis_sentinel_username }} on #{{ redis_sentinel_redis_password | hash('sha256') }} {{ redis_sentinel_acl_rules }}
+user {{ redis_exporter_username }} on #{{ redis_exporter_password | hash('sha256') }} {{ redis_exporter_acl_rules }}

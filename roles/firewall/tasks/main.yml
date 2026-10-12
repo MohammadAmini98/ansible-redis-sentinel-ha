@@ -1,0 +1,68 @@
+---
+- name: Install UFW
+  ansible.builtin.apt:
+    name: ufw
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: redis_firewall_enabled | bool
+
+- name: Allow SSH from management networks
+  community.general.ufw:
+    rule: allow
+    port: "{{ redis_firewall_ssh_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop: "{{ redis_firewall_management_cidrs }}"
+  when: redis_firewall_enabled | bool
+
+- name: Allow Redis and Sentinel traffic between cluster nodes
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.1 }}"
+    proto: tcp
+    src: "{{ hostvars[item.0].ansible_host }}"
+  loop: "{{ groups['redis_cluster'] | product(redis_cluster_firewall_ports) | list }}"
+  vars:
+    redis_cluster_firewall_ports: >-
+      {{ [redis_tls_port, redis_sentinel_tls_port]
+         if redis_tls_enabled | bool else [redis_port, redis_sentinel_port] }}
+  when: redis_firewall_enabled | bool
+
+- name: Allow Redis client traffic from approved networks
+  community.general.ufw:
+    rule: allow
+    port: "{{ redis_tls_port if redis_tls_enabled | bool else redis_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop: "{{ redis_firewall_client_cidrs }}"
+  when: redis_firewall_enabled | bool
+
+- name: Allow exporter traffic from Prometheus
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.1 }}"
+    proto: tcp
+    src: "{{ hostvars[item.0].ansible_host }}"
+  loop: >-
+    {{ groups['monitoring_server'] | product(
+       [node_exporter_port, redis_exporter_port, redis_sentinel_exporter_port]) | list }}
+  when: redis_firewall_enabled | bool
+
+- name: Allow Prometheus access from management networks
+  community.general.ufw:
+    rule: allow
+    port: "{{ prometheus_port }}"
+    proto: tcp
+    src: "{{ item }}"
+  loop: "{{ redis_firewall_management_cidrs }}"
+  when:
+    - redis_firewall_enabled | bool
+    - inventory_hostname in groups['monitoring_server']
+
+- name: Enable UFW with a default deny policy
+  community.general.ufw:
+    state: enabled
+    policy: deny
+    direction: incoming
+  when: redis_firewall_enabled | bool

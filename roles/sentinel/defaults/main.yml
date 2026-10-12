@@ -1,0 +1,54 @@
+---
+redis_image: redis:7.4.11-bookworm
+redis_base_dir: /opt/redis
+redis_sentinel_container_name: redis-sentinel
+redis_sentinel_container_user: "999:999"
+redis_sentinel_force_config_reinitialize: false
+redis_auth_enabled: true
+redis_sentinel_auth_enabled: true
+redis_password: ""
+redis_sentinel_password: ""
+
+redis_sentinel_bind_address: 0.0.0.0
+redis_sentinel_protected_mode: "no"
+redis_sentinel_daemonize: "no"
+redis_sentinel_working_directory: /tmp
+redis_port: 6379
+redis_tls_port: 6380
+redis_sentinel_port: 26379
+redis_sentinel_tls_port: 26380
+redis_sentinel_announce_ip: "{{ ansible_host }}"
+redis_sentinel_announce_port: "{{ redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port }}"
+redis_sentinel_master_name: mymaster
+redis_sentinel_monitor_host: "{{ hostvars[groups['redis_master'][0]].ansible_host }}"
+redis_sentinel_monitor_port: "{{ redis_tls_port if redis_tls_enabled | bool else redis_port }}"
+redis_sentinel_quorum: 2
+redis_sentinel_down_after_ms: 5000
+redis_sentinel_failover_timeout_ms: 60000
+redis_sentinel_parallel_syncs: 1
+
+redis_acl_enabled: false
+redis_sentinel_username: sentinel
+redis_sentinel_redis_password: ""
+redis_tls_enabled: false
+redis_disabled_port: 0
+redis_tls_container_dir: /tls
+redis_tls_source_dir: "{{ playbook_dir }}/files/tls"
+redis_tls_cert_filename: redis.crt
+redis_tls_key_filename: redis.key
+redis_tls_ca_filename: ca.crt
+redis_tls_auth_clients: "yes"
+redis_tls_replication: "yes"
+
+redis_sentinel_container_memory: 256m
+redis_sentinel_container_cpus: 0.5
+redis_sentinel_container_pids_limit: 128
+redis_sentinel_container_stop_timeout: 30
+redis_sentinel_container_cap_drop:
+  - ALL
+redis_sentinel_container_security_opts:
+  - no-new-privileges:true
+docker_log_driver: local
+docker_log_options:
+  max-size: 20m
+  max-file: "5"

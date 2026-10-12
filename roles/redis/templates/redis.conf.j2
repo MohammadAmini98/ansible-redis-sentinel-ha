@@ -1,0 +1,40 @@
+bind {{ redis_bind_address }}
+protected-mode {{ redis_protected_mode }}
+port {{ redis_disabled_port if redis_tls_enabled | bool else redis_port }}
+{% if redis_tls_enabled | bool %}
+tls-port {{ redis_tls_port }}
+tls-cert-file {{ redis_tls_container_dir }}/{{ redis_tls_cert_filename }}
+tls-key-file {{ redis_tls_container_dir }}/{{ redis_tls_key_filename }}
+tls-ca-cert-file {{ redis_tls_container_dir }}/{{ redis_tls_ca_filename }}
+tls-auth-clients {{ redis_tls_auth_clients }}
+tls-replication {{ redis_tls_replication }}
+{% endif %}
+daemonize {{ redis_daemonize }}
+dir {{ redis_data_dir }}
+dbfilename {{ redis_dbfilename }}
+appendonly {{ redis_appendonly }}
+appendfsync {{ redis_appendfsync }}
+{% for save_rule in redis_rdb_save_rules if redis_persistence_enabled | bool %}
+save {{ save_rule }}
+{% else %}
+save {{ redis_disabled_save_value | to_json }}
+{% endfor %}
+{% if redis_auth_enabled | bool and redis_acl_enabled | bool %}
+aclfile {{ redis_acl_file }}
+masteruser {{ redis_replication_username }}
+masterauth {{ redis_replication_password | to_json }}
+{% elif redis_auth_enabled | bool %}
+requirepass {{ redis_password | to_json }}
+masterauth {{ redis_password | to_json }}
+{% endif %}
+replica-announce-ip {{ redis_replica_announce_ip }}
+replica-announce-port {{ redis_replica_announce_port }}
+{% if ansible_host != redis_effective_master_ip %}
+replicaof {{ redis_effective_master_ip }} {{ redis_effective_master_port }}
+{% endif %}
+replica-priority {{ redis_replica_priority }}
+repl-backlog-size {{ redis_repl_backlog_size }}
+min-replicas-to-write {{ redis_min_replicas_to_write }}
+min-replicas-max-lag {{ redis_min_replicas_max_lag }}
+maxmemory {{ redis_maxmemory }}
+maxmemory-policy {{ redis_maxmemory_policy }}

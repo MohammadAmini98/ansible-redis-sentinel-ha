@@ -1,0 +1,14 @@
+[Unit]
+Description=Disable Transparent Huge Pages for Redis
+After=local-fs.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+{% for thp_path in redis_transparent_hugepage_paths %}
+ExecStart=/bin/sh -c 'test ! -e "{{ thp_path }}" || echo never > "{{ thp_path }}"'
+{% endfor %}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+---
+redis_firewall_enabled: false
+redis_firewall_management_cidrs: []
+redis_firewall_client_cidrs: "{{ redis_firewall_management_cidrs }}"
+redis_firewall_ssh_port: 22
+redis_port: 6379
+redis_tls_enabled: false
+redis_tls_port: 6380
+redis_sentinel_port: 26379
+redis_sentinel_tls_port: 26380
+node_exporter_port: 9100
+redis_exporter_port: 9121
+redis_sentinel_exporter_port: 9122
+prometheus_port: 9090

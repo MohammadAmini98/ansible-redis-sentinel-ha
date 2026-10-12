@@ -1,0 +1,13 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy a state-preserving Redis Sentinel container
+    options:
+      redis_sentinel_port: {type: int, required: true}
+      redis_sentinel_master_name: {type: str, required: true}
+      redis_sentinel_quorum: {type: int, required: true}
+      redis_sentinel_down_after_ms: {type: int, required: true}
+      redis_sentinel_failover_timeout_ms: {type: int, required: true}
+      redis_sentinel_parallel_syncs: {type: int, required: true}
+      redis_tls_enabled: {type: bool, required: true}
+

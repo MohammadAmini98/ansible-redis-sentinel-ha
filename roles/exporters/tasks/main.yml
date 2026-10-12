@@ -1,0 +1,244 @@
+---
+- name: Validate exporter variables
+  ansible.builtin.assert:
+    that:
+      - ansible_host is defined
+      - not (redis_auth_enabled | bool) or redis_acl_enabled | bool or redis_password | length > 0
+      - not (redis_auth_enabled | bool and redis_acl_enabled | bool) or redis_exporter_password | length > 0
+      - not (redis_sentinel_auth_enabled | bool) or redis_sentinel_password | length > 0
+    fail_msg: "Exporters require an advertised Redis IP and a password when Redis authentication is enabled."
+  no_log: true
+
+- name: Create exporter secret directory
+  ansible.builtin.file:
+    path: "{{ exporters_base_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Render the Redis Exporter password map
+  ansible.builtin.template:
+    src: password-map.json.j2
+    dest: "{{ exporters_base_dir }}/redis-passwords.json"
+    owner: "{{ redis_exporter_secret_owner }}"
+    group: "{{ redis_exporter_secret_group }}"
+    mode: "{{ redis_exporter_secret_mode }}"
+  vars:
+    address: >-
+      {{ redis_exporter_redis_address
+         | replace('://', '://' ~ redis_exporter_username ~ '@')
+         if redis_acl_enabled | bool
+         else redis_exporter_redis_address }}
+    password: "{{ redis_exporter_password if redis_acl_enabled | bool else redis_password }}"
+  when: redis_auth_enabled | bool
+  notify: Restart Redis Exporter
+  no_log: true
+
+- name: Render the Sentinel Exporter password map
+  ansible.builtin.template:
+    src: password-map.json.j2
+    dest: "{{ exporters_base_dir }}/sentinel-passwords.json"
+    owner: "{{ redis_exporter_secret_owner }}"
+    group: "{{ redis_exporter_secret_group }}"
+    mode: "{{ redis_exporter_secret_mode }}"
+  vars:
+    address: "{{ redis_exporter_sentinel_address }}"
+    password: "{{ redis_sentinel_password }}"
+  when: redis_sentinel_auth_enabled | bool
+  notify: Restart Sentinel Exporter
+  no_log: true
+
+- name: Remove exporter password maps that are no longer required
+  ansible.builtin.file:
+    path: "{{ exporters_base_dir }}/{{ item.filename }}"
+    state: absent
+  loop:
+    - filename: redis-passwords.json
+      enabled: "{{ redis_auth_enabled }}"
+    - filename: sentinel-passwords.json
+      enabled: "{{ redis_sentinel_auth_enabled }}"
+  when: not (item.enabled | bool)
+
+- name: Read the desired TLS bundle checksums for exporters
+  ansible.builtin.stat:
+    path: "{{ redis_tls_source_dir }}/{{ inventory_hostname }}/{{ item }}"
+    checksum_algorithm: sha256
+  loop:
+    - "{{ redis_tls_cert_filename }}"
+    - "{{ redis_tls_key_filename }}"
+    - "{{ redis_tls_ca_filename }}"
+  register: redis_exporter_tls_files
+  when: redis_tls_enabled | bool
+  delegate_to: localhost
+  become: false
+  no_log: true
+
+- name: Validate the desired exporter TLS bundle
+  ansible.builtin.assert:
+    that:
+      - redis_exporter_tls_files.results | selectattr('stat.exists', 'equalto', false) | list | length == 0
+    fail_msg: "TLS material is missing for {{ inventory_hostname }}."
+  when: redis_tls_enabled | bool
+  no_log: true
+
+- name: Calculate the exporter TLS bundle identity
+  ansible.builtin.set_fact:
+    redis_exporter_tls_bundle_checksum: >-
+      {{ redis_exporter_tls_files.results | map(attribute='stat.checksum') | join(':')
+         if redis_tls_enabled | bool else 'disabled' }}
+  no_log: true
+
+- name: Pull exporter images
+  community.docker.docker_image:
+    name: "{{ item }}"
+    source: pull
+    force_source: false
+  loop:
+    - "{{ node_exporter_image }}"
+    - "{{ redis_exporter_image }}"
+
+- name: Start Node Exporter
+  community.docker.docker_container:
+    name: "{{ node_exporter_container_name }}"
+    image: "{{ node_exporter_image }}"
+    command:
+      - "--path.rootfs=/host"
+      - "--web.listen-address={{ ansible_host }}:{{ node_exporter_port }}"
+      - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    pid_mode: host
+    read_only: true
+    memory: "{{ exporters_container_memory }}"
+    cpus: "{{ exporters_container_cpus }}"
+    pids_limit: "{{ exporters_container_pids_limit }}"
+    cap_drop:
+      - ALL
+    security_opts:
+      - no-new-privileges:true
+    log_driver: "{{ docker_log_driver }}"
+    log_options: "{{ docker_log_options }}"
+    volumes:
+      - "/:/host:ro,rslave"
+    comparisons:
+      image: strict
+      command: strict
+      volumes: strict
+
+- name: Start Redis Exporter
+  community.docker.docker_container:
+    name: "{{ redis_exporter_container_name }}"
+    image: "{{ redis_exporter_image }}"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    user: "{{ redis_exporter_container_user }}"
+    read_only: true
+    memory: "{{ exporters_container_memory }}"
+    cpus: "{{ exporters_container_cpus }}"
+    pids_limit: "{{ exporters_container_pids_limit }}"
+    cap_drop:
+      - ALL
+    security_opts:
+      - no-new-privileges:true
+    log_driver: "{{ docker_log_driver }}"
+    log_options: "{{ docker_log_options }}"
+    labels:
+      io.ansible.redis-sentinel-ha.tls-bundle: "{{ redis_exporter_tls_bundle_checksum }}"
+    volumes: >-
+      {{
+        ([exporters_base_dir ~ '/redis-passwords.json:/run/secrets/redis-passwords.json:ro']
+         if redis_auth_enabled | bool else [])
+        + ([redis_base_dir ~ '/tls:/tls:ro'] if redis_tls_enabled | bool else [])
+      }}
+    env: >-
+      {{
+        {'REDIS_ADDR': redis_exporter_redis_address,
+         'REDIS_EXPORTER_WEB_LISTEN_ADDRESS': ansible_host ~ ':' ~ redis_exporter_port,
+         'REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT': 'true'}
+        | combine({'REDIS_USER': redis_exporter_username}
+                  if redis_auth_enabled | bool and redis_acl_enabled | bool else {})
+        | combine({'REDIS_PASSWORD_FILE': '/run/secrets/redis-passwords.json'} if redis_auth_enabled | bool else {})
+        | combine({'REDIS_EXPORTER_TLS_CA_CERT_FILE': '/tls/' ~ redis_tls_ca_filename,
+                   'REDIS_EXPORTER_TLS_CLIENT_CERT_FILE': '/tls/' ~ redis_tls_cert_filename,
+                   'REDIS_EXPORTER_TLS_CLIENT_KEY_FILE': '/tls/' ~ redis_tls_key_filename}
+                  if redis_tls_enabled | bool else {})
+      }}
+    comparisons:
+      image: strict
+      env: strict
+      volumes: strict
+  no_log: true
+
+- name: Start Sentinel Exporter
+  community.docker.docker_container:
+    name: "{{ redis_sentinel_exporter_container_name }}"
+    image: "{{ redis_exporter_image }}"
+    state: started
+    restart_policy: unless-stopped
+    network_mode: host
+    user: "{{ redis_exporter_container_user }}"
+    read_only: true
+    memory: "{{ exporters_container_memory }}"
+    cpus: "{{ exporters_container_cpus }}"
+    pids_limit: "{{ exporters_container_pids_limit }}"
+    cap_drop:
+      - ALL
+    security_opts:
+      - no-new-privileges:true
+    log_driver: "{{ docker_log_driver }}"
+    log_options: "{{ docker_log_options }}"
+    labels:
+      io.ansible.redis-sentinel-ha.tls-bundle: "{{ redis_exporter_tls_bundle_checksum }}"
+    volumes: >-
+      {{
+        ([exporters_base_dir ~ '/sentinel-passwords.json:/run/secrets/sentinel-passwords.json:ro']
+         if redis_sentinel_auth_enabled | bool else [])
+        + ([redis_base_dir ~ '/tls:/tls:ro'] if redis_tls_enabled | bool else [])
+      }}
+    env: >-
+      {{
+        {'REDIS_ADDR': redis_exporter_sentinel_address,
+         'REDIS_EXPORTER_WEB_LISTEN_ADDRESS': ansible_host ~ ':' ~ redis_sentinel_exporter_port,
+         'REDIS_EXPORTER_IS_SENTINEL': 'true',
+         'REDIS_EXPORTER_DISABLE_SCRAPE_ENDPOINT': 'true'}
+        | combine({'REDIS_PASSWORD_FILE': '/run/secrets/sentinel-passwords.json'} if redis_sentinel_auth_enabled | bool else {})
+        | combine({'REDIS_EXPORTER_TLS_CA_CERT_FILE': '/tls/' ~ redis_tls_ca_filename,
+                   'REDIS_EXPORTER_TLS_CLIENT_CERT_FILE': '/tls/' ~ redis_tls_cert_filename,
+                   'REDIS_EXPORTER_TLS_CLIENT_KEY_FILE': '/tls/' ~ redis_tls_key_filename}
+                  if redis_tls_enabled | bool else {})
+      }}
+    comparisons:
+      image: strict
+      env: strict
+      volumes: strict
+  no_log: true
+
+- name: Apply exporter restarts before readiness checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for exporter ports
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host }}"
+    port: "{{ item }}"
+    state: started
+    timeout: "{{ exporters_startup_timeout }}"
+  loop:
+    - "{{ node_exporter_port }}"
+    - "{{ redis_exporter_port }}"
+    - "{{ redis_sentinel_exporter_port }}"
+  when: not ansible_check_mode
+
+- name: Verify Redis exporter reports a healthy Redis connection
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ redis_exporter_port }}/metrics"
+    return_content: true
+    status_code: 200
+  register: redis_exporter_metrics
+  changed_when: false
+  retries: 10
+  delay: 3
+  until: "'redis_up 1' in redis_exporter_metrics.content"
+  when: not ansible_check_mode

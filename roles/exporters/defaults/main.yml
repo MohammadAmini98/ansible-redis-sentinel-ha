@@ -1,0 +1,48 @@
+---
+node_exporter_image: quay.io/prometheus/node-exporter:v1.12.1
+node_exporter_container_name: node-exporter
+node_exporter_port: 9100
+
+redis_exporter_image: quay.io/oliver006/redis_exporter:v1.93.0
+redis_exporter_container_name: redis-exporter
+redis_exporter_port: 9121
+redis_sentinel_exporter_container_name: redis-sentinel-exporter
+redis_sentinel_exporter_port: 9122
+redis_exporter_container_user: "59000:59000"
+redis_exporter_secret_owner: "{{ redis_exporter_container_user.split(':')[0] }}"
+redis_exporter_secret_group: "{{ redis_exporter_container_user.split(':')[1] }}"
+redis_exporter_secret_mode: "0400"
+redis_auth_enabled: true
+redis_acl_enabled: false
+redis_exporter_username: exporter
+redis_exporter_password: ""
+redis_password: ""
+redis_port: 6379
+redis_sentinel_port: 26379
+redis_sentinel_tls_port: 26380
+redis_sentinel_auth_enabled: true
+redis_sentinel_password: ""
+redis_tls_enabled: false
+redis_tls_port: 6380
+redis_tls_source_dir: "{{ playbook_dir }}/files/tls"
+redis_tls_ca_filename: ca.crt
+redis_tls_cert_filename: redis.crt
+redis_tls_key_filename: redis.key
+redis_base_dir: /opt/redis
+redis_exporter_redis_address: >-
+  {{ ('rediss' if redis_tls_enabled | bool else 'redis') ~ '://' ~
+     ansible_host ~ ':' ~
+     (redis_tls_port if redis_tls_enabled | bool else redis_port) }}
+redis_exporter_sentinel_address: >-
+  {{ ('rediss' if redis_tls_enabled | bool else 'redis') ~ '://' ~
+     ansible_host ~ ':' ~
+     (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) }}
+exporters_base_dir: /opt/redis-exporters
+exporters_container_memory: 128m
+exporters_container_cpus: 0.25
+exporters_container_pids_limit: 64
+exporters_startup_timeout: 60
+docker_log_driver: local
+docker_log_options:
+  max-size: 20m
+  max-file: "5"

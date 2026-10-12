@@ -1,0 +1,96 @@
+---
+- name: Assert that the operating system is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family == "Debian"
+    fail_msg: "The docker role currently supports Debian and Ubuntu hosts."
+
+- name: Install Docker and the Python Docker bindings
+  ansible.builtin.apt:
+    name:
+      - "{{ docker_apt_package }}"
+      - "{{ docker_python_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: "{{ docker_apt_lock_timeout }}"
+  register: docker_package_install
+  retries: "{{ docker_apt_install_retries }}"
+  delay: "{{ docker_apt_retry_delay }}"
+  until: docker_package_install is succeeded
+  when: docker_install_source == 'distro'
+
+- name: Install prerequisites for Docker's official repository
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - "{{ docker_python_package }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+    lock_timeout: "{{ docker_apt_lock_timeout }}"
+  when: docker_install_source == 'official'
+
+- name: Create the APT keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: docker_install_source == 'official'
+
+- name: Install Docker's official APT signing key
+  ansible.builtin.get_url:
+    url: "https://download.docker.com/linux/{{ ansible_distribution | lower }}/gpg"
+    dest: /etc/apt/keyrings/docker.asc
+    owner: root
+    group: root
+    mode: "0644"
+  when: docker_install_source == 'official'
+
+- name: Configure Docker's official APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [arch={{ docker_official_apt_architecture }} signed-by=/etc/apt/keyrings/docker.asc]
+      https://download.docker.com/linux/{{ ansible_distribution | lower }}
+      {{ ansible_distribution_release }} stable
+    filename: docker
+    state: present
+    update_cache: true
+  when: docker_install_source == 'official'
+
+- name: Install Docker Engine from the official repository
+  ansible.builtin.apt:
+    name: "{{ docker_official_packages }}"
+    state: present
+    lock_timeout: "{{ docker_apt_lock_timeout }}"
+  register: docker_official_install
+  retries: "{{ docker_apt_install_retries }}"
+  delay: "{{ docker_apt_retry_delay }}"
+  until: docker_official_install is succeeded
+  when: docker_install_source == 'official'
+
+- name: Enable and start Docker
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Configure the Docker daemon
+  ansible.builtin.copy:
+    content: "{{ docker_daemon_config | to_nice_json }}\n"
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Docker
+  when: docker_configure_daemon | bool
+
+- name: Add selected users to the Docker group
+  ansible.builtin.user:
+    name: "{{ item }}"
+    groups: docker
+    append: true
+  loop: "{{ docker_users }}"

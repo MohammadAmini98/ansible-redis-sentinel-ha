@@ -1,0 +1,28 @@
+bind {{ redis_sentinel_bind_address }}
+protected-mode {{ redis_sentinel_protected_mode }}
+port {{ redis_disabled_port if redis_tls_enabled | bool else redis_sentinel_port }}
+{% if redis_tls_enabled | bool %}
+tls-port {{ redis_sentinel_tls_port }}
+tls-cert-file {{ redis_tls_container_dir }}/{{ redis_tls_cert_filename }}
+tls-key-file {{ redis_tls_container_dir }}/{{ redis_tls_key_filename }}
+tls-ca-cert-file {{ redis_tls_container_dir }}/{{ redis_tls_ca_filename }}
+tls-auth-clients {{ redis_tls_auth_clients }}
+tls-replication {{ redis_tls_replication }}
+{% endif %}
+{% if redis_sentinel_auth_enabled | bool %}
+requirepass {{ redis_sentinel_password | to_json }}
+{% endif %}
+daemonize {{ redis_sentinel_daemonize }}
+dir {{ redis_sentinel_working_directory }}
+sentinel announce-ip {{ redis_sentinel_announce_ip }}
+sentinel announce-port {{ redis_sentinel_announce_port }}
+sentinel monitor {{ redis_sentinel_master_name }} {{ redis_sentinel_monitor_host }} {{ redis_sentinel_monitor_port }} {{ redis_sentinel_quorum }}
+{% if redis_auth_enabled | bool and redis_acl_enabled | bool %}
+sentinel auth-user {{ redis_sentinel_master_name }} {{ redis_sentinel_username }}
+sentinel auth-pass {{ redis_sentinel_master_name }} {{ redis_sentinel_redis_password | to_json }}
+{% elif redis_auth_enabled | bool %}
+sentinel auth-pass {{ redis_sentinel_master_name }} {{ redis_password | to_json }}
+{% endif %}
+sentinel down-after-milliseconds {{ redis_sentinel_master_name }} {{ redis_sentinel_down_after_ms }}
+sentinel parallel-syncs {{ redis_sentinel_master_name }} {{ redis_sentinel_parallel_syncs }}
+sentinel failover-timeout {{ redis_sentinel_master_name }} {{ redis_sentinel_failover_timeout_ms }}

@@ -1,0 +1,11 @@
+---
+argument_specs:
+  main:
+    short_description: Install and configure Docker Engine
+    options:
+      docker_apt_package: {type: str, required: true}
+      docker_install_source: {type: str, choices: [distro, official]}
+      docker_apt_lock_timeout: {type: int, required: true}
+      docker_users: {type: list, elements: str}
+      docker_configure_daemon: {type: bool, required: true}
+      docker_daemon_config: {type: dict, required: true}

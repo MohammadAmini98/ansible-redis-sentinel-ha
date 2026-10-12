@@ -1,0 +1,309 @@
+---
+- name: Perform an opt-in disruptive Redis Sentinel failover test
+  hosts: ansible_controller
+  become: true
+  gather_facts: false
+  force_handlers: true
+  vars:
+    failover_test_confirm: false
+    failover_test_key: ansible:failover:test
+  pre_tasks:
+    - name: Require explicit confirmation for the disruptive test
+      ansible.builtin.assert:
+        that:
+          - failover_test_confirm | bool
+        fail_msg: "Run with -e failover_test_confirm=true to authorize stopping the current master."
+
+    - name: Generate one immutable failover canary value
+      ansible.builtin.set_fact:
+        failover_test_value: "canary-{{ lookup('pipe', 'date +%s%N') }}"
+  tasks:
+    - name: Query every Sentinel for the current master
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+             '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+            + ['--raw', 'sentinel', 'get-master-addr-by-name', redis_sentinel_master_name]
+          }}
+      register: failover_old_master
+      changed_when: false
+      failed_when: false
+      ignore_unreachable: true
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['redis_cluster'] }}"
+      no_log: "{{ redis_sentinel_auth_enabled | bool }}"
+
+    - name: Build the list of reachable Sentinels
+      ansible.builtin.set_fact:
+        failover_reachable_sentinels: >-
+          {{ failover_reachable_sentinels | default([])
+             + [{'host': item.item,
+                 'master_ip': item.stdout_lines[0],
+                 'master_port': item.stdout_lines[1]}] }}
+      loop: "{{ failover_old_master.results }}"
+      when:
+        - item.rc | default(-1) == 0
+        - item.stdout_lines | default([]) | length >= 2
+
+    - name: Require at least one reachable Sentinel
+      ansible.builtin.assert:
+        that:
+          - failover_reachable_sentinels | default([]) | length > 0
+        fail_msg: No Redis Sentinel is reachable from the Ansible controller.
+
+    - name: Require reachable Sentinels to agree on the master
+      ansible.builtin.assert:
+        that:
+          - failover_reachable_sentinels | map(attribute='master_ip') | unique | list | length == 1
+          - failover_reachable_sentinels | map(attribute='master_port') | unique | list | length == 1
+        fail_msg: Reachable Sentinels disagree on the current Redis master.
+
+    - name: Save the currently reported master address
+      ansible.builtin.set_fact:
+        failover_old_master_ip: "{{ failover_reachable_sentinels[0].master_ip }}"
+        failover_old_master_port: "{{ failover_reachable_sentinels[0].master_port }}"
+
+    - name: Map the old master IP to an inventory host
+      ansible.builtin.set_fact:
+        failover_old_master_host: "{{ item }}"
+      loop: "{{ groups['redis_cluster'] }}"
+      when: hostvars[item].ansible_host == failover_old_master_ip
+
+    - name: Validate the old master inventory mapping
+      ansible.builtin.assert:
+        that:
+          - failover_old_master_host is defined
+        fail_msg: Sentinel returned a master address that is not in redis_cluster.
+
+    - name: Select a Sentinel outside the master node
+      ansible.builtin.set_fact:
+        failover_sentinel_host: >-
+          {{ (failover_reachable_sentinels
+              | rejectattr('host', 'equalto', failover_old_master_host)
+              | map(attribute='host')
+              | first) | default('') }}
+
+    - name: Require a Sentinel outside the master node
+      ansible.builtin.assert:
+        that:
+          - failover_sentinel_host is defined
+          - failover_sentinel_host | length > 0
+        fail_msg: >-
+          No Sentinel outside the current master node is reachable. Refusing
+          to disrupt the master because the test could lose its observer.
+
+    - name: Confirm Sentinel quorum before disruption
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+             '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+            + ['--raw', 'sentinel', 'ckquorum', redis_sentinel_master_name]
+          }}
+      delegate_to: "{{ failover_sentinel_host }}"
+      register: failover_quorum
+      changed_when: false
+      failed_when: failover_quorum.rc != 0 or 'OK' not in failover_quorum.stdout
+      no_log: "{{ redis_sentinel_auth_enabled | bool }}"
+
+    - name: Write a canary before failover
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['--user', redis_admin_username, '-a', redis_admin_password]
+               if redis_auth_enabled | bool and redis_acl_enabled | bool else
+               (['-a', redis_password] if redis_auth_enabled | bool else []))
+            + ['set', failover_test_key, failover_test_value]
+          }}
+      delegate_to: "{{ failover_old_master_host }}"
+      register: failover_initial_write
+      changed_when: failover_initial_write.stdout == 'OK'
+      failed_when: false
+      retries: 10
+      delay: 2
+      until: failover_initial_write.stdout == 'OK'
+      no_log: "{{ redis_auth_enabled | bool }}"
+
+    - name: Stop the current master
+      community.docker.docker_container:
+        name: "{{ redis_container_name }}"
+        state: stopped
+      delegate_to: "{{ failover_old_master_host }}"
+      notify: Ensure former Redis master is running
+
+    - name: Wait for Sentinel to elect a different master
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+             '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['-a', redis_sentinel_password] if redis_sentinel_auth_enabled | bool else [])
+            + ['--raw', 'sentinel', 'get-master-addr-by-name', redis_sentinel_master_name]
+          }}
+      register: failover_new_master
+      delegate_to: "{{ failover_sentinel_host }}"
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: >-
+        failover_new_master.stdout_lines | length >= 2
+        and failover_new_master.stdout_lines[0] != failover_old_master_ip
+      no_log: "{{ redis_sentinel_auth_enabled | bool }}"
+
+    - name: Map the new master IP to an inventory host
+      ansible.builtin.set_fact:
+        failover_new_master_host: "{{ item }}"
+      loop: "{{ groups['redis_cluster'] }}"
+      when: hostvars[item].ansible_host == failover_new_master.stdout_lines[0]
+
+    - name: Validate the new master inventory mapping
+      ansible.builtin.assert:
+        that:
+          - failover_new_master_host is defined
+        fail_msg: Sentinel elected a master address that is not in redis_cluster.
+
+    - name: Verify the canary and write through the promoted master
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['--user', redis_admin_username, '-a', redis_admin_password]
+               if redis_auth_enabled | bool and redis_acl_enabled | bool else
+               (['-a', redis_password] if redis_auth_enabled | bool else []))
+            + ['get', failover_test_key]
+          }}
+      delegate_to: "{{ failover_new_master_host }}"
+      register: failover_canary
+      changed_when: false
+      failed_when: failover_canary.stdout != failover_test_value
+      no_log: "{{ redis_auth_enabled | bool }}"
+
+    - name: Write and replicate a post-failover canary
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['--user', redis_admin_username, '-a', redis_admin_password]
+               if redis_auth_enabled | bool and redis_acl_enabled | bool else
+               (['-a', redis_password] if redis_auth_enabled | bool else []))
+            + ['set', failover_test_key, failover_test_value ~ '-after']
+          }}
+      delegate_to: "{{ failover_new_master_host }}"
+      register: failover_post_write
+      changed_when: failover_post_write.stdout == 'OK'
+      failed_when: false
+      retries: 15
+      delay: 2
+      until: failover_post_write.stdout == 'OK'
+      no_log: "{{ redis_auth_enabled | bool }}"
+
+    - name: Wait for the post-failover write to reach a replica
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['--user', redis_admin_username, '-a', redis_admin_password]
+               if redis_auth_enabled | bool and redis_acl_enabled | bool else
+               (['-a', redis_password] if redis_auth_enabled | bool else []))
+            + ['wait', '1', '5000']
+          }}
+      delegate_to: "{{ failover_new_master_host }}"
+      register: failover_wait_result
+      changed_when: false
+      failed_when: failover_wait_result.stdout | int < 1
+      no_log: "{{ redis_auth_enabled | bool }}"
+
+    - name: Start the former master
+      community.docker.docker_container:
+        name: "{{ redis_container_name }}"
+        state: started
+      delegate_to: "{{ failover_old_master_host }}"
+
+    - name: Wait for the former master to rejoin as a replica
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['--user', redis_admin_username, '-a', redis_admin_password]
+               if redis_auth_enabled | bool and redis_acl_enabled | bool else
+               (['-a', redis_password] if redis_auth_enabled | bool else []))
+            + ['--raw', 'role']
+          }}
+      delegate_to: "{{ failover_old_master_host }}"
+      register: failover_old_master_role
+      changed_when: false
+      retries: 30
+      delay: 2
+      until: failover_old_master_role.stdout is match('^(slave|replica)')
+      no_log: "{{ redis_auth_enabled | bool }}"
+
+    - name: Remove the failover canary
+      ansible.builtin.command:
+        argv: >-
+          {{
+            ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
+            + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
+                '--cert', '/tls/' ~ redis_tls_cert_filename,
+                '--key', '/tls/' ~ redis_tls_key_filename]
+               if redis_tls_enabled | bool else [])
+            + (['--user', redis_admin_username, '-a', redis_admin_password]
+               if redis_auth_enabled | bool and redis_acl_enabled | bool else
+               (['-a', redis_password] if redis_auth_enabled | bool else []))
+            + ['del', failover_test_key]
+          }}
+      delegate_to: "{{ failover_new_master_host }}"
+      changed_when: true
+      no_log: "{{ redis_auth_enabled | bool }}"
+
+    - name: Verify the recovered deployment
+      ansible.builtin.include_role:
+        name: verify
+
+  handlers:
+    - name: Ensure former Redis master is running
+      community.docker.docker_container:
+        name: "{{ redis_container_name }}"
+        state: started
+      delegate_to: "{{ failover_old_master_host }}"

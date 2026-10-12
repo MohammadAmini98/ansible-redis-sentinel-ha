@@ -1,0 +1,39 @@
+#!/bin/sh
+set -eu
+
+backup_dir={{ redis_backup_dir | quote }}
+timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+{% if redis_auth_enabled | bool %}
+password=$(cat "$backup_dir/.redis-password")
+{% endif %}
+
+redis_cli() {
+  docker exec{% if redis_auth_enabled | bool %} -e REDISCLI_AUTH="$password"{% endif %} \
+    {{ redis_container_name | quote }} redis-cli \
+    -p {{ (redis_tls_port if redis_tls_enabled | bool else redis_port) | quote }} \
+{% if redis_tls_enabled | bool %}
+    --tls --cacert /tls/{{ redis_tls_ca_filename | quote }} \
+    --cert /tls/{{ redis_tls_cert_filename | quote }} \
+    --key /tls/{{ redis_tls_key_filename | quote }} \
+{% endif %}
+{% if redis_auth_enabled | bool and redis_acl_enabled | bool %}
+    --user {{ redis_admin_username | quote }} \
+{% endif %}
+    "$@"
+}
+
+redis_cli BGSAVE
+deadline=$(( $(date +%s) + {{ redis_backup_timeout_seconds }} ))
+while :; do
+  running=$(redis_cli --raw INFO persistence | sed -n 's/^rdb_bgsave_in_progress://p' | tr -d '\r')
+  [ "$running" = "0" ] && break
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "Redis BGSAVE did not finish before the backup timeout" >&2
+    exit 1
+  fi
+  sleep 2
+done
+
+docker exec {{ redis_container_name | quote }} redis-check-rdb {{ ('/data/' ~ redis_dbfilename) | quote }} >/dev/null
+install -m 0600 {{ (redis_base_dir ~ '/data/' ~ redis_dbfilename) | quote }} "$backup_dir/redis-${timestamp}.rdb"
+find "$backup_dir" -type f -name 'redis-*.rdb' -mtime +{{ redis_backup_retention_days }} -delete

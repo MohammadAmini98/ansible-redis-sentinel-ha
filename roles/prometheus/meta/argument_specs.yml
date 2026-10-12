@@ -1,0 +1,12 @@
+---
+argument_specs:
+  main:
+    short_description: Deploy and validate Prometheus
+    options:
+      prometheus_image: {type: str, required: true}
+      prometheus_port: {type: int, required: true}
+      prometheus_scrape_interval: {type: str, required: true}
+      prometheus_retention_time: {type: str, required: true}
+      prometheus_retention_size: {type: str, required: true}
+      prometheus_external_labels: {type: dict}
+
