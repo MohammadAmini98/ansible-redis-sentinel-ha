@@ -23,6 +23,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+             '-h', hostvars[item].ansible_host,
              '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -103,6 +104,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+             '-h', hostvars[failover_sentinel_host].ansible_host,
              '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -122,6 +124,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-h', hostvars[failover_old_master_host].ansible_host,
              '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -153,6 +156,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_sentinel_container_name, 'redis-cli',
+             '-h', hostvars[failover_sentinel_host].ansible_host,
              '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -188,6 +192,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-h', hostvars[failover_new_master_host].ansible_host,
              '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -209,6 +214,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-h', hostvars[failover_new_master_host].ansible_host,
              '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -233,6 +239,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-h', hostvars[failover_new_master_host].ansible_host,
              '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -260,6 +267,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-h', hostvars[failover_old_master_host].ansible_host,
              '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,
@@ -283,6 +291,7 @@
         argv: >-
           {{
             ['docker', 'exec', redis_container_name, 'redis-cli',
+             '-h', hostvars[failover_new_master_host].ansible_host,
              '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
             + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
                 '--cert', '/tls/' ~ redis_tls_cert_filename,

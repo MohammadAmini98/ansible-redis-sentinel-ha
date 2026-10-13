@@ -109,7 +109,8 @@
     argv: >-
       {{
         ['docker', 'exec', redis_sentinel_container_name | default('redis-sentinel'),
-         'redis-cli', '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
+         'redis-cli', '-h', ansible_host,
+         '-p', (redis_sentinel_tls_port if redis_tls_enabled | bool else redis_sentinel_port) | string]
         + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
             '--cert', '/tls/' ~ redis_tls_cert_filename,
             '--key', '/tls/' ~ redis_tls_key_filename]
@@ -213,6 +214,7 @@
     argv: >-
       {{
         ['docker', 'exec', redis_container_name, 'redis-cli',
+         '-h', ansible_host,
          '-p', (redis_tls_port if redis_tls_enabled | bool else redis_port) | string]
         + (['--tls', '--cacert', '/tls/' ~ redis_tls_ca_filename,
             '--cert', '/tls/' ~ redis_tls_cert_filename,

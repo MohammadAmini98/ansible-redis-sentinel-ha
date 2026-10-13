@@ -38,7 +38,7 @@ redis_replication_password: >-
 redis_image: redis:7.4.11-bookworm
 redis_container_name: redis
 redis_base_dir: /opt/redis
-redis_bind_address: 0.0.0.0
+redis_bind_address: "{{ ansible_host }}"
 redis_port: 6379
 redis_protected_mode: "{{ 'yes' if redis_auth_enabled | bool else 'no' }}"
 redis_daemonize: "no"
@@ -100,7 +100,7 @@ redis_sentinel_redis_password: >-
   {{ vault_redis_sentinel_redis_password | default(redis_password) }}
 
 redis_sentinel_container_name: redis-sentinel
-redis_sentinel_bind_address: 0.0.0.0
+redis_sentinel_bind_address: "{{ ansible_host }}"
 redis_sentinel_protected_mode: "no"
 redis_sentinel_daemonize: "no"
 redis_sentinel_working_directory: /tmp
